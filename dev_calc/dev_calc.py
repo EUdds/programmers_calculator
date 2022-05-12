@@ -3,9 +3,7 @@ import tty
 import termios
 import os
 
-from time import sleep
-
-DEBUG = False
+DEBUG = sys.argv[1] == '-d' if len(sys.argv) > 1 else False
 
 class Interface:
     
@@ -18,6 +16,8 @@ class Interface:
         self.operands = []
         self.curr_base = self.option_bases[self.curr_mode]
         self.prev_base = self.curr_base
+        self.last_op = None
+        self.logger = CalcLogger()
 
     def show_interface(self):
         os.system('clear')
@@ -37,12 +37,15 @@ class Interface:
                         print("%s" % self.operands[op_idx], end=" ")
             print("")
         print("-"*20) 
-        print("q: quit, k: previous, j: next")
-        debug("%s" % self.operands)
-        debug("%s" % self.curr_mode)
-        debug("%s" % self.curr_base)
-        debug("%s" % self.prev_base)
+        print("q: quit, k: previous, j: next, c: clear")
+        debug("Operands: %s" % self.operands)
+        debug("Current Mode: %s" % self.curr_mode)
+        debug("Current Base: %s" % self.curr_base)
+        debug("Previous Base: %s" % self.prev_base)
         debug("Ready to solve? %s" % self.ready_to_solve())
+        debug("Last Operation: %s" % self.last_op)
+        for log in self.logger.get_log(10):
+            debug(log)
     
     def get_valid_op_inputs(self):
         if self.curr_mode == 0: # DEC
@@ -55,7 +58,7 @@ class Interface:
             return [str(i) for i in range(8)]
     
     def get_valid_operations(self):
-        return ["+", "-", "*", "/", ""]
+        return ["+", "-", "*", "/"]
     
     def interact(self, ch):
         if ch == "q":
@@ -72,6 +75,8 @@ class Interface:
                     self.operands.pop()
         elif ord(ch) == 10 or ord(ch) == 13:
             self.solve()
+        elif ch == "c":
+            self.operands = []
         else:
             debug("%s" % ch)
         
@@ -144,8 +149,10 @@ class Interface:
         idx = self.operands.index(operation)
         A = self.operands[idx - 1]
         B = self.operands[idx + 1]
-        dec_A = self.to_decimal(A)
-        dec_B = self.to_decimal(B)
+        dec_A = self.to_base(A, self.curr_base, 10)
+        dec_B = self.to_base(B, self.curr_base, 10)
+        dec_A = int(dec_A)
+        dec_B = int(dec_B)
         if operation == "+":
             result = dec_A + dec_B
         elif operation == "-":
@@ -154,6 +161,8 @@ class Interface:
             result = dec_A * dec_B
         elif operation == "/":
             result = dec_A // dec_B
+        
+        self.last_op = f"{dec_A} {operation} {dec_B} = {result}"
         self.operands[idx] = self.to_base(str(result), 10, self.curr_base)
         self.operands.pop(idx + 1)
         self.operands.pop(idx - 1)
@@ -172,7 +181,7 @@ class Interface:
             else:
                 self.interact(ch)
     
-    def to_binary(self, number):
+    def to_binary(self, number, is_negative=False):
         bin_num = ""
         if int(number) >= 0:
             bin_num = bin(int(number))[2:]
@@ -180,45 +189,76 @@ class Interface:
             bin_num = bin(int(number))[3:]
 
         # Split into bytes 
-        if len(bin_num) > 4: # Only run this if the number is greater than 4 bits
-            return self.format_binary_number(bin_num)
-        else:
-            return bin_num
+        return self.format_binary_number(bin_num, is_negative=is_negative )
         
-    def format_binary_number(self, bin_num):
+    def format_binary_number(self, bin_num, is_negative=False):
+        self.logger.log_operation(f"Is Negative? {is_negative}")
         bin_num = bin_num[::-1]
         bytes_inv_le = [bin_num[i:i+4] for i in range(0, len(bin_num), 4)]
         bytes_le = [byte[::-1] for byte in bytes_inv_le]
         bytes_lst = bytes_le[::-1]
         if (len(bytes_lst[0]) < 4): # If the last byte is not full
             padding_amt = 4 - len(bytes_lst[0])
-            ext = bytes_lst[0][0] if int(bin_num, 2) < 0 else "0"
-            bytes_lst[0] = str(ext * padding_amt) + bytes_lst[0]
+            msb = bytes_lst[0][0] if is_negative else "0"
+            bytes_lst[0] = str(msb * padding_amt) + bytes_lst[0]
         bytes_str = " ".join(bytes_lst)
         return bytes_str
     
     def to_decimal(self, number):
         return int(number, self.curr_base)
     
-    def to_hex(self, number):
-        return hex(int(number))[2:]
+    def to_hex(self, number is_negative=False):
+        if int(number) < 0:
+            hex_num = hex(int(number))[3:]
+        else:
+            hex_num = hex(int(number))[2:]
+        
+        
+        
+
     
     def to_octal(self, number):
-        return oct(int(number))[2:]
+        if int(number) < 0:
+            return oct(int(number))[3:]
+        else:
+            return oct(int(number))[2:]
     
     def to_base(self, number, from_base, base):
+        number = number.replace(" ", "") # Remove the spaces between bytes
         dec_num = str(int(number, from_base))
+        is_negative = dec_num[0] == "-"
+        self.logger.log_operation(f"Converting {number} from base {from_base} to base {base}")
+        self.logger.log_operation(f"Dec num: {dec_num}")
         if base == 10:
             return dec_num
         elif base == 2:
-            return self.to_binary(dec_num)
+            return self.to_binary(dec_num, is_negative=is_negative)
         elif base == 16:
-            return self.to_hex(dec_num)
+            return self.to_hex(dec_num, is_negative=is_negative)
         elif base == 8:
             return self.to_octal(dec_num)
         else:
             raise ValueError("Invalid base")
+
+
+class CalcLogger:
+    def __init__(self):
+        self.log = []
     
+    def log_operation(self, operation):
+        self.log.append(operation)
+    
+    def get_log(self, num_lines: int =10):
+        if num_lines is None:
+            return self.log
+        else:
+            return self.log[-num_lines:]
+    
+    def clear_log(self):
+        self.log = []
+    
+    def print_log(self, num_lines):
+        print("\n".join(self.get_log(num_lines)))
 
 
             
@@ -230,6 +270,6 @@ def debug(msg, *args):
         else:
             print(msg)
 
-if __name__ == "__main__":
-    interface = Interface()
-    interface.run()
+def main():
+    intf = Interface()
+    intf.run()
